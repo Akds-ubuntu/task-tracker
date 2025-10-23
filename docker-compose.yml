@@ -1,0 +1,57 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: task_tracker
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/task_tracker
+    volumes:
+      - .:/app
+    command: >
+      sh -c "
+        mkdir -p /app/certs_n &&
+        if [ ! -f /app/certs_n/jwt-private.pem ]; then
+          openssl ecparam -genkey -name prime256v1 -noout -out /app/certs_n/jwt-private.pem &&
+          openssl ec -in /app/certs_n/jwt-private.pem -pubout -out /app/certs_n/jwt-public.pem &&
+          echo 'JWT keys generated'
+        fi &&
+        export JWT_PRIVATE_KEY=$(cat /app/certs_n/jwt-private.pem) &&
+        export JWT_PUBLIC_KEY=$(cat /app/certs_n/jwt-public.pem) &&
+        
+        alembic upgrade head &&
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      "
+  streamlit:
+    build: .
+    ports:
+      - "8501:8501"
+    depends_on:
+      - app
+    environment:
+      - BACKEND_URL=http://app:8000
+    volumes:
+      - .:/app
+    working_dir: /app/frontend
+    command: streamlit run app.py --server.port 8501 --server.address 0.0.0.0
+
+volumes:
+  postgres_data:
